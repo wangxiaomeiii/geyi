@@ -6,6 +6,9 @@ import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from vs_env import find_vcvars
+
 out = root / 'build' / ('host-verify' if '--verify' in sys.argv else 'host')
 out.mkdir(parents=True, exist_ok=True)
 logs = []
@@ -21,16 +24,16 @@ def run(args, **kw):
     return result.stdout
 
 cc = os.environ.get('CC') or shutil.which('gcc') or shutil.which('clang')
-for name, source in [('geyi-tests', 'tests/test_geyi.c'), ('geyi-input-tests', 'tests/test_input.c'), ('geyi-cli', 'tools/geyi_cli.c')]:
+for name, source in [('geyi-tests', 'tests/test_geyi.c'), ('geyi-input-tests', 'tests/test_input.c'),
+                     ('geyi-history-tests', 'tests/test_history.c'), ('geyi-cli', 'tools/geyi_cli.c')]:
     exe = out/(name + ('.exe' if os.name=='nt' else ''))
-    sources = [str(root/'src/geyi_game.c'),str(root/'src/geyi_input.c'),str(root/source)]
+    sources = [str(root/'src/geyi_game.c'),str(root/'src/geyi_input.c'),str(root/'src/geyi_history.c'),str(root/source)]
     if cc:
         run([cc,'-std=c11','-Wall','-Wextra','-Werror','-I'+str(root/'src'),*sources,'-o',str(exe)])
     else:
-        base = Path(os.environ.get('ProgramFiles', r'C:\Program Files'))/'Microsoft Visual Studio'/'2022'
-        scripts = list(base.glob('*/VC/Auxiliary/Build/vcvars64.bat'))
-        if not scripts: raise SystemExit('MSVC/gcc/clang not found; no tests were run.')
-        command = f'call "{scripts[0]}" >nul && cl /nologo /std:c11 /W4 /WX /utf-8 /I"{root / "src"}" ' + ' '.join(f'"{s}"' for s in sources) + f' /Fe:"{exe}"'
+        vcvars = find_vcvars()
+        if not vcvars: raise SystemExit('MSVC/gcc/clang not found; no tests were run.')
+        command = f'call "{vcvars}" >nul && cl /nologo /std:c11 /W4 /WX /utf-8 /I"{root / "src"}" ' + ' '.join(f'"{s}"' for s in sources) + f' /Fe:"{exe}"'
         run('cmd.exe /d /s /c "' + command + '"')
     if name.endswith('tests'): run([str(exe)],timeout=30)
 

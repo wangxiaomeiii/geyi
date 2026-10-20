@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 sys.stdout.reconfigure(encoding='utf-8',errors='replace')
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from vs_env import find_vcvars
 
 root=Path(__file__).resolve().parents[1]
 sdk=Path(os.environ.get('SIFLI_SDK',r'D:\sifli\SiFli-SDK'))
@@ -15,8 +17,7 @@ out=root/'build/desktop'
 out.mkdir(parents=True,exist_ok=True)
 logs=[]
 executable=out/'geyi-desktop-cn.exe'
-vs=Path(os.environ.get('ProgramFiles',r'C:\Program Files'))/'Microsoft Visual Studio/2022'
-vcvars=next(vs.glob('*/VC/Auxiliary/Build/vcvars64.bat'),None)
+vcvars=find_vcvars()
 if not vcvars or not (lvgl/'lvgl.h').exists():raise SystemExit('MSVC or SDK LVGL v9 not found')
 result=subprocess.run('cmd.exe /d /s /c "call "'+str(vcvars)+'" >nul && set"',capture_output=True)
 if result.returncode:raise SystemExit(result.stderr.decode(errors='replace'))
@@ -49,7 +50,7 @@ try:
     response.write_text('\n'.join('"'+str(p)+'"' for p in objs),encoding='utf-8-sig')
     r=subprocess.run([lib,'/nologo','/OUT:'+str(out/'lvgl.lib'),'@'+str(response)],cwd=out,env=env,capture_output=True)
     if r.returncode:raise RuntimeError(r.stdout.decode('mbcs',errors='replace'))
-    app=[root/'src/geyi_game.c',root/'src/geyi_feedback.c',root/'src/geyi_ui.c',root/'src/geyi_font_cn16.c',root/'tools/geyi_desktop.c']
+    app=[root/'src/geyi_game.c',root/'src/geyi_history.c',root/'src/geyi_feedback.c',root/'src/geyi_ui.c',root/'src/geyi_font_cn16.c',root/'tools/geyi_desktop.c']
     app_objects=[compile_one(p) for p in app]
     command=[cc,'/nologo',*[str(p) for p in app_objects],str(out/'lvgl.lib'),
              '/Fe:'+str(executable),'/link','/SUBSYSTEM:WINDOWS','user32.lib','gdi32.lib']
