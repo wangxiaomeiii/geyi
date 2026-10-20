@@ -40,6 +40,10 @@ design:
       alternatives_considered: "规则嵌入界面回调，或独立规则库并用电脑测试"
       rationale: "后者可复用给联机房主，固定棋盘可自动验证"
       decided_by: "Codex给出备选及规则示例，殷白玉要求按建议先做一版；团队最终规则待评审"
+    - decision: "REQ-315历史记录先只存内存，不写flash"
+      alternatives_considered: "A内存版重启清空；B电脑文件落盘+板端仍内存；C直接做板端flash持久化"
+      rationale: "板端文件系统与flash分区未查证，先保证行为可测且不引入未验证的持久化；记录保留版本号与种子，后续接flash与复盘不必改结构"
+      decided_by: "agent给出三项权衡，殷白玉选择A（内存版，重启清空）"
     # 每一条关键决策都要写清楚：决策内容 / 考虑过的备选方案 / 选择理由 / 谁做的最终决定
     - decision: "<例如：选择BLE而非WiFi做数据同步>"
       alternatives_considered: "<例如：曾考虑过用SD卡离线导出，因为使用场景需要实时同步而放弃>"
@@ -69,6 +73,12 @@ physical_verification:
     agent_conclusion: "<agent基于该证据得出的结论，例如：启动正常，IMU初始化成功>"
 
 test_results:
+  - test_id: "TC-315"
+    description: "历史记录：内存存储、列表/详情/清空、对局计时与结束自动记录（REQ-315）"
+    expected: "结束一局记录一条；重开与返回首页不记录；计时随真实时间递增；翻页/详情/清空正常"
+    actual: "主机105断言PASS；桌面LVGL测试PASS（1.1s后显示00:01、记录时长≥1000ms、清空后为空）；板端未编译未烧录"
+    pass: true
+    evidence_path: "evidence/history/20261020/"
   - test_id: "<测试编号，例如 TC-01>"
     description: "<测试内容简述>"
     expected: "<预期结果>"
@@ -77,6 +87,7 @@ test_results:
     evidence_path: "<对应的原始数据/截图路径>"
 
 known_issues:
+  - "REQ-315历史记录第一、二层已实现并通过主机与桌面测试（105断言；结束一局只记一次；重开/返回首页不记录；1.1s计时显示00:01且记录时长≥1000ms）。记录只存内存、重启清空，未写flash，SDK文件系统能力未查证；开发机无arm-none-eabi-gcc，板端固件未编译未烧录，真机列表与用时待学生回传。证据evidence/history/20261020/。"
   - "最新审核反馈：殷白玉已确认实际灯色、亮度及闪灯次数，记录为本人实测确认，无仪器亮度/计时数据；下列待确认描述为此前状态。本轮更新PR #3，不合并。"
   - "213937板端采集与当前灯效源码哈希一致，light自检及清灯/行动/红胜事件已记录，但无实物灯色/亮度/次数确认。已有团队PR #3，待本轮提交审核后更新，不重复创建。"
   - "REQ-314先做板载RGB，无音效；调度/事件测试及SDK编译通过，物理灯色亮度和时序待烧录验证；evidence/feedback/。"
@@ -102,6 +113,8 @@ self_review: |
 
 human_checkpoints:
   # 用于区分"学生自己做的决定"和"agent建议、学生只是同意"
+  - decision_point: "REQ-315历史记录的计时口径、保存范围与列表交互"
+    student_confirmation: "学生在三个选项中确认：进入棋局即开始计时（含思考）、本轮只存内存重启清空、列表分页每页5条。理由是本轮要先跑通可测的行为，flash持久化等查明SDK文件系统再定。"
   - decision_point: "<例如：是否采用非线性PWM映射>"
     student_confirmation: "<学生对该决策的确认说明，最好包含'为什么认可/为什么修改'的具体理由>"
 
