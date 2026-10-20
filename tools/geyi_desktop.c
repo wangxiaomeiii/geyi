@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "geyi_ui.h"
+#include "geyi_history.h"
 #include "geyi_font_cn16.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,8 +67,11 @@ static int tests(void)
     gy_ui_action(GY_UI_UP);gy_ui_tilt_select(GY_UP,1);gy_ui_action(GY_UI_CONFIRM);
     check(!gy_ui_has_preview()&&!memcmp(&before,gy_ui_game(),sizeof(before)),"menu ignores game input");
     check(gy_ui_take_feedback()==GY_FX_NONE,"menu game actions do not flash");
-    click(160,280);click(160,346);
-    check(!gy_ui_is_playing(),"home placeholders disabled");
+    click(160,280);check(gy_ui_screen()==GY_SCREEN_HOME,"home params still disabled");
+    click(160,348);screenshot("history-empty.bmp");
+    check(gy_ui_screen()==GY_SCREEN_HISTORY&&gy_hist_count()==0,"empty history opens");
+    check(gy_ui_take_feedback()==GY_FX_CLEAR,"opening history clears any leftover light");
+    click(160,412);check(gy_ui_screen()==GY_SCREEN_HOME,"history back to home");
     click(160,212);screenshot("modes.bmp");
     click(160,250);click(160,320);
     check(!gy_ui_is_playing(),"unfinished modes disabled");
@@ -92,12 +96,21 @@ static int tests(void)
     check(gy_ui_take_feedback()==GY_FX_MOVE,"confirmed move flashes once");
     click(70,395);check(gy_ui_game()->revision==1,"disabled confirm not repeated");
     check(gy_ui_take_feedback()==GY_FX_NONE,"duplicate confirm does not flash");
+    /* Real elapsed time must reach the timer and the recorded duration. */
+    Sleep(1100);lv_timer_handler();screenshot("timer.bmp");
     gy_ui_action(GY_UI_RESIGN);check(gy_ui_game()->outcome==GY_RED_WIN,"resign");screenshot("result.bmp");
     check(gy_ui_take_feedback()==GY_FX_RED,"blue resign selects red winner light");
+    check(gy_hist_count()==1,"finished match is recorded once");
+    check(gy_hist_at(0)->duration_ms>=1000,"record keeps measured duration");
+    check(gy_hist_at(0)->outcome==GY_RED_WIN,"record keeps the winner");
+    check(gy_hist_at(0)->ended_by==GY_END_BLUE_RESIGN,"record keeps who resigned");
+    check(gy_hist_at(0)->moves==1,"record keeps move count");
+    check(gy_hist_at(0)->version==GY_HISTORY_VERSION,"record carries format version");
     click(240,20);check(!memcmp(&before,gy_ui_game(),sizeof(before)),"mouse restart");
     check(gy_ui_take_feedback()==GY_FX_CLEAR,"restart clears light");
     gy_ui_action(GY_UI_RESIGN);check(gy_ui_take_feedback()==GY_FX_BLUE,"red resign selects blue winner light");
     gy_ui_action(GY_UI_RESTART);(void)gy_ui_take_feedback();
+    check(gy_hist_count()==2,"restart does not record an abandoned match");
     gy_ui_action(GY_UI_PLACE);check(!gy_ui_has_preview(),"no coins cannot place");
     /* Drive legal game actions until coins are available; avoid test-only state mutation. */
     {
@@ -127,6 +140,21 @@ done: ;
     click(166,20);check(!gy_ui_is_playing()&&!gy_ui_has_preview(),"game back home clears preview");
     click(160,212);click(160,154);
     check(gy_ui_is_playing()&&!memcmp(&before,gy_ui_game(),sizeof(before)),"single re-entry resets game");
+    {   /* REQ-315: list, detail, clear and no record for an abandoned match. */
+        int recorded=gy_hist_count();
+        check(recorded>=2,"completed matches are recorded");
+        click(166,20);
+        check(!gy_ui_is_playing()&&gy_hist_count()==recorded,"leaving mid-game adds no record");
+        click(160,348);check(gy_ui_screen()==GY_SCREEN_HISTORY,"history entry opens the list");
+        screenshot("history.bmp");
+        click(160,100);check(gy_ui_screen()==GY_SCREEN_DETAIL,"row opens the detail page");
+        screenshot("history-detail.bmp");
+        click(107,412);check(gy_ui_screen()==GY_SCREEN_HISTORY,"detail returns to the list");
+        click(297,360);check(gy_hist_count()==0,"clear empties the history");
+        screenshot("history-empty.bmp");
+        click(160,412);check(gy_ui_screen()==GY_SCREEN_HOME,"history returns to home");
+    }
+    puts("PASS: TC-315 history list/detail/clear and no record for abandoned or restarted matches");
     puts("PASS: TC-314 light timeline/selftest and real UI feedback events (no physical LED)");
     puts("PASS: TC-313 home/modes/disabled entries/input guard/single re-entry");
     puts("PASS: real LVGL UI, mouse events, preview/cancel/confirm, quantity, results, restart");return 0;

@@ -1,5 +1,6 @@
 #ifdef GEYI_WITH_LVGL
 #include "geyi_ui.h"
+#include "geyi_history.h"
 #include "geyi_font_cn16.h"
 #include <stdint.h>
 #include <stdio.h>
@@ -9,16 +10,22 @@ static GyGame game;
 static GyPreview preview;
 static int direction=-1, amount=1, selected_count=1, placing=0, place_column=-1, ready=0;
 static lv_obj_t *tiles[6][6], *labels[6][6], *health[6][6];
-static lv_obj_t *turn_label,*money_label,*hint,*count_label,*confirm_button;
-static lv_obj_t *home_page,*mode_page,*game_page;
-static int playing;
-static int feedback;
+static lv_obj_t *turn_label,*money_label,*hint,*count_label,*confirm_button,*timer_label;
+static lv_obj_t *home_page,*mode_page,*game_page,*hist_page,*detail_page;
+static lv_obj_t *pages[5];
+static lv_obj_t *hist_rows[5],*hist_row_labels[5],*hist_empty;
+static lv_obj_t *detail_lines[5];
+static int screen, playing, feedback;
+static int hist_index;
+static uint32_t session_start, session_seed, session_elapsed;
+static int session_recorded, session_resigner;
+static uint32_t now_ms(void) {return lv_tick_get();}
 static void show_page(lv_obj_t *page)
 {
-    lv_obj_add_flag(home_page,LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(mode_page,LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(game_page,LV_OBJ_FLAG_HIDDEN);
+    int i;
+    for(i=0;i<5;++i)lv_obj_add_flag(pages[i],LV_OBJ_FLAG_HIDDEN);
     lv_obj_remove_flag(page,LV_OBJ_FLAG_HIDDEN);
+    for(i=0;i<5;++i)if(pages[i]==page)screen=i;
     playing=page==game_page;
     ready=0;placing=0;direction=-1;place_column=-1;
 }
@@ -29,6 +36,83 @@ static lv_obj_t *text(lv_obj_t *parent,const char *value,int x,int y)
     lv_obj_set_style_text_color(a,lv_color_hex(0xe7edf8),0);return a;
 }
 static void status(const char *value) {lv_label_set_text(hint,value);}
+static const char *outcome_text(uint8_t outcome)
+{
+    return outcome==GY_RED_WIN?"红方胜":outcome==GY_BLUE_WIN?"蓝方胜":outcome==GY_DRAW?"平局":"进行中";
+}
+static const char *ended_text(uint8_t ended_by)
+{
+    return ended_by==GY_END_RED_RESIGN?"红方认输":ended_by==GY_END_BLUE_RESIGN?"蓝方认输":"全灭";
+}
+static void timer_refresh(void)
+{
+    char value[8];
+    if(!game.outcome)session_elapsed=now_ms()-session_start;
+    gy_hist_format_duration(session_elapsed,value,(int)sizeof(value));
+    lv_label_set_text(timer_label,value);
+}
+static void timer_event(lv_timer_t *timer)
+{
+    (void)timer;
+    if(playing&&!game.outcome)timer_refresh();
+}
+static void record_result(void)
+{
+    GyRecord record;
+    if(session_recorded)return;
+    session_recorded=1;
+    memset(&record,0,sizeof(record));
+    record.outcome=(uint8_t)game.outcome;
+    record.ended_by=(uint8_t)(session_resigner==0?GY_END_RED_RESIGN:
+                              session_resigner==1?GY_END_BLUE_RESIGN:GY_END_KNOCKOUT);
+    record.moves=(uint16_t)(game.moves>0xFFFFu?0xFFFFu:game.moves);
+    record.seed=session_seed;
+    record.duration_ms=session_elapsed;
+    if(gy_hist_add(&record)<0)status("历史记录保存失败");
+}
+static void history_refresh(void)
+{
+    char value[48];
+    int i,total=gy_hist_count(),last=(total+4)/5;
+    if(last<1)last=1;
+    if(hist_index>last-1)hist_index=last-1;
+    if(hist_index<0)hist_index=0;
+    lv_label_set_text(hist_empty,total?"":"暂无记录");
+    for(i=0;i<5;++i) {
+        int index=hist_index*5+i;
+        if(index<total) {
+            const GyRecord *r=gy_hist_at(index);
+            char duration[8];
+            gy_hist_format_duration(r->duration_ms,duration,(int)sizeof(duration));
+            lv_snprintf(value,sizeof(value),"%s  %s  %u步",outcome_text(r->outcome),duration,(unsigned)r->moves);
+            lv_label_set_text(hist_row_labels[i],value);
+            lv_obj_remove_flag(hist_rows[i],LV_OBJ_FLAG_HIDDEN);
+        } else lv_obj_add_flag(hist_rows[i],LV_OBJ_FLAG_HIDDEN);
+    }
+}
+static void detail_open(int index)
+{
+    const GyRecord *r=gy_hist_at(index);
+    char value[48],duration[8];
+    if(!r)return;
+    gy_hist_format_duration(r->duration_ms,duration,(int)sizeof(duration));
+    lv_snprintf(value,sizeof(value),"结果  %s",outcome_text(r->outcome));
+    lv_label_set_text(detail_lines[0],value);
+    lv_snprintf(value,sizeof(value),"用时  %s",duration);
+    lv_label_set_text(detail_lines[1],value);
+    lv_snprintf(value,sizeof(value),"步数  %u",(unsigned)r->moves);
+    lv_label_set_text(detail_lines[2],value);
+    lv_snprintf(value,sizeof(value),"结束  %s",ended_text(r->ended_by));
+    lv_label_set_text(detail_lines[3],value);
+    lv_snprintf(value,sizeof(value),"种子  %u",(unsigned)r->seed);
+    lv_label_set_text(detail_lines[4],value);
+    show_page(detail_page);
+}
+static void history_row_event(lv_event_t *e)
+{
+    int row=(int)(intptr_t)lv_event_get_user_data(e);
+    detail_open(hist_index*5+row);
+}
 static void render(void)
 {
     const GyGame *shown=ready&&!placing?&preview.visible:&game;
@@ -72,6 +156,7 @@ static void render(void)
     }
     if(ready)lv_obj_remove_state(confirm_button,LV_STATE_DISABLED);
     else lv_obj_add_state(confirm_button,LV_STATE_DISABLED);
+    timer_refresh();
 }
 static void choose(void)
 {
@@ -91,11 +176,18 @@ void gy_ui_action(int a)
     int old_outcome=game.outcome;
     if(a==GY_UI_HOME){feedback=GY_FX_CLEAR;show_page(home_page);return;}
     if(a==GY_UI_MODES){feedback=GY_FX_CLEAR;show_page(mode_page);return;}
+    if(a==GY_UI_HISTORY){feedback=GY_FX_CLEAR;hist_index=0;history_refresh();show_page(hist_page);return;}
+    if(a==GY_UI_HISTORY_BACK){feedback=GY_FX_CLEAR;history_refresh();show_page(hist_page);return;}
+    if(a==GY_UI_HISTORY_PREV){if(hist_index>0)--hist_index;history_refresh();return;}
+    if(a==GY_UI_HISTORY_NEXT){if((hist_index+1)*5<gy_hist_count())++hist_index;history_refresh();return;}
+    if(a==GY_UI_HISTORY_CLEAR){gy_hist_reset();hist_index=0;history_refresh();return;}
     if(a==GY_UI_SINGLE){show_page(game_page);a=GY_UI_RESTART;}
     if(!playing)return;
     if(a==GY_UI_RESTART) {
         feedback=GY_FX_CLEAR;
         gy_init(&game,gy_default_config(),20261015);direction=-1;amount=1;placing=0;ready=0;place_column=-1;
+        session_seed=20261015u;session_start=now_ms();session_elapsed=0;
+        session_recorded=0;session_resigner=-1;
         status("先选方向 再确认");
     } else if(a==GY_UI_CANCEL) {
         ready=0;placing=0;place_column=-1;direction=-1;status("已取消 棋盘状态不变");
@@ -110,10 +202,15 @@ void gy_ui_action(int a)
         ready=0;placing=0;place_column=-1;
         if(game.coins[game.turn]>=game.config.cost)placing=1;
         else status("需要4金币才能放置");
-    } else if(a==GY_UI_RESIGN) {gy_resign(&game);ready=0;placing=0;}
-    if(!old_outcome&&game.outcome)
+    } else if(a==GY_UI_RESIGN) {
+        if(!game.outcome)session_resigner=game.turn;
+        gy_resign(&game);ready=0;placing=0;
+    }
+    if(!old_outcome&&game.outcome) {
+        session_elapsed=now_ms()-session_start;
+        record_result();
         feedback=game.outcome==GY_RED_WIN?GY_FX_RED:game.outcome==GY_BLUE_WIN?GY_FX_BLUE:GY_FX_DRAW;
-    else if(a==GY_UI_CONFIRM&&game.revision!=old_revision)feedback=GY_FX_MOVE;
+    } else if(a==GY_UI_CONFIRM&&game.revision!=old_revision)feedback=GY_FX_MOVE;
     render();
 }
 void gy_ui_cell(int x,int y)
@@ -145,6 +242,33 @@ static void unavailable(lv_obj_t *root,const char *name,int y)
     lv_obj_t *b=button(root,name,32,y,326,48,GY_UI_HOME);
     lv_obj_add_state(b,LV_STATE_DISABLED);lv_obj_set_style_opa(b,LV_OPA_40,LV_STATE_DISABLED);
 }
+static void history_pages(lv_obj_t *root)
+{
+    int i;
+    hist_page=page(root);
+    text(hist_page,"历史记录",32,40);
+    hist_empty=text(hist_page,"暂无记录",32,80);
+    for(i=0;i<5;++i) {
+        lv_obj_t *row=lv_button_create(hist_page);
+        lv_obj_set_pos(row,32,80+i*44);lv_obj_set_size(row,326,40);
+        lv_obj_set_style_bg_color(row,lv_color_hex(0x2b3a52),0);
+        lv_obj_set_style_radius(row,7,0);lv_obj_set_style_shadow_width(row,0,0);
+        hist_rows[i]=row;
+        hist_row_labels[i]=lv_label_create(row);
+        lv_label_set_text(hist_row_labels[i],"");
+        lv_obj_align(hist_row_labels[i],LV_ALIGN_LEFT_MID,10,0);
+        lv_obj_add_event_cb(row,history_row_event,LV_EVENT_CLICKED,(void*)(intptr_t)i);
+    }
+    button(hist_page,"上一页",32,340,100,40,GY_UI_HISTORY_PREV);
+    button(hist_page,"下一页",134,340,100,40,GY_UI_HISTORY_NEXT);
+    button(hist_page,"清空",236,340,122,40,GY_UI_HISTORY_CLEAR);
+    button(hist_page,"返回",32,392,326,40,GY_UI_HOME);
+    detail_page=page(root);
+    text(detail_page,"对局详情",32,40);
+    for(i=0;i<5;++i)detail_lines[i]=text(detail_page,"",32,92+i*38);
+    button(detail_page,"返回列表",32,392,150,40,GY_UI_HISTORY_BACK);
+    button(detail_page,"首页",196,392,162,40,GY_UI_HOME);
+}
 void gy_ui_create(void)
 {
     int x,y;lv_obj_t *root=lv_screen_active();
@@ -157,7 +281,7 @@ void gy_ui_create(void)
     text(home_page,"倾斜棋盘  轮流对战",32,123);
     button(home_page,"开始游戏",32,188,326,52,GY_UI_MODES);
     unavailable(home_page,"自定义游戏参数 - 暂未开放",258);
-    unavailable(home_page,"历史记录 - 暂未开放",324);
+    button(home_page,"历史记录",32,324,326,48,GY_UI_HISTORY);
     text(home_page,"单机原型  /  同板双人",32,406);
     text(mode_page,"选择游戏模式",32,40);
     text(mode_page,"选择单机，开始同板双人对战",32,78);
@@ -171,6 +295,7 @@ void gy_ui_create(void)
     button(root,"首页",138,8,59,28,GY_UI_HOME);
     button(root,"重开",205,8,78,28,GY_UI_RESTART);button(root,"认输",291,8,82,28,GY_UI_RESIGN);
     turn_label=text(root,"RED TURN",16,40);money_label=text(root,"",16,61);
+    timer_label=text(root,"00:00",262,40);
     for(y=0;y<6;++y)for(x=0;x<6;++x) {
         lv_obj_t *tile=lv_obj_create(root);tiles[y][x]=tile;
         lv_obj_set_pos(tile,76+x*40,86+y*40);lv_obj_set_size(tile,37,37);
@@ -190,12 +315,18 @@ void gy_ui_create(void)
     lv_obj_set_style_opa(confirm_button,LV_OPA_40,LV_STATE_DISABLED);
     button(root,"取消",139,378,110,32,GY_UI_CANCEL);button(root,"放置",257,378,118,32,GY_UI_PLACE);
     hint=text(root,"",16,422);lv_obj_set_width(hint,360);
+    /* History pages must hang off the screen, not the game page, or hiding the
+       game page would hide them too. */
+    history_pages(lv_screen_active());
+    pages[0]=home_page;pages[1]=mode_page;pages[2]=game_page;pages[3]=hist_page;pages[4]=detail_page;
+    lv_timer_create(timer_event,500,NULL);
     gy_ui_action(GY_UI_SINGLE);gy_ui_action(GY_UI_HOME);
 }
 const GyGame *gy_ui_game(void) {return &game;}
 int gy_ui_has_preview(void) {return ready;}
 int gy_ui_is_placing(void) {return placing;}
 int gy_ui_is_playing(void) {return playing;}
+int gy_ui_screen(void) {return screen;}
 int gy_ui_take_feedback(void) {int event=feedback;feedback=GY_FX_NONE;return event;}
 void gy_ui_tilt_select(int d,int count)
 {
